@@ -1,0 +1,6 @@
+{
+  "name": "Remix: NOLT-LMS-GUI-Admin",
+  "description": "A sophisticated financial administration dashboard featuring investment tracking, loan management, staff loan workflows, NIP Mobile App transfer monitoring, push notification campaigns with interactive widget previews, promotional link tracking, fraud protection, and loan origination controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
