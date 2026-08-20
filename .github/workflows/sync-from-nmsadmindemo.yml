@@ -1,0 +1,16 @@
+name: Sync from NMSAdminDemo
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Every hour — adjust as needed
+  workflow_dispatch:      # Manual trigger from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror NMSAdminDemo into AdminFE-Demo
+        run: |
+          git clone --mirror https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/NoltFinance/NMSAdminDemo.git repo
+          cd repo
+          git push --mirror https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/NoltFinance/AdminFE-Demo.git
