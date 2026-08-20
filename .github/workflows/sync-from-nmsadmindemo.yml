@@ -9,8 +9,8 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Mirror NMSAdminDemo into AdminFE-Demo
+      - name: Mirror NMSAdminDemo into NMS-AdminFE-Demo
         run: |
           git clone --mirror https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/NoltFinance/NMSAdminDemo.git repo
           cd repo
-          git push --mirror https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/NoltFinance/AdminFE-Demo.git
+          git push --mirror https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/NOLTDemoRepos/NMS-AdminFE-Demo.git
