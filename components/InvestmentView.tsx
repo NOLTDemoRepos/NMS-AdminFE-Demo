@@ -4,6 +4,7 @@ import { ReviewRequest, UserRole, RequestStatus, InvestmentRate } from '../types
 import ExportFieldsModal from './ExportFieldsModal';
 import ApprovalStepper from './ApprovalStepper';
 import NewInvestmentModal from './NewInvestmentModal';
+import { calculateAgentCommission } from '../services/agentCommissionService';
 
 interface InvestmentViewProps {
   requests: ReviewRequest[];
@@ -14,7 +15,7 @@ interface InvestmentViewProps {
   onUpdateIndemnity?: (requestId: string, url: string) => void;
   onUpdateRequest?: (updatedReq: ReviewRequest) => void;
   onAddRequest?: (newReq: ReviewRequest) => void;
-  subView?: 'dashboard' | 'mobile';
+  subView?: 'dashboard' | 'mobile' | 'backoffice';
 }
 
 const INITIAL_RATES: InvestmentRate[] = [
@@ -53,6 +54,8 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
   const [isReturnConfirmOpen, setIsReturnConfirmOpen] = useState(false);
   const [returnReason, setReturnReason] = useState('');
   const [returnStage, setReturnStage] = useState('Pending Review');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'agent' | 'direct'>('all');
+  const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'error' | 'success' | 'warning' } | null>(null);
 
   useEffect(() => {
@@ -61,6 +64,15 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
       return () => clearTimeout(timer);
     }
   }, [toastMessage]);
+
+  const isBackOfficeInvestment = (req: ReviewRequest) => {
+    return Boolean(
+      req.isBackOfficeInvestment || 
+      req.bookingChannel === 'Back Office' || 
+      (req.referenceId && req.referenceId.startsWith('#BO-')) ||
+      (req.id && req.id.startsWith('bo-'))
+    );
+  };
 
   const handleApprove = () => {
     if (!selectedInvestment) return;
@@ -102,7 +114,18 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
     });
   };
 
-  const investmentRequests = useMemo(() => requests.filter(req => req.type === 'Investment' || req.type === 'Liquidation'), [requests]);
+  const investmentRequests = useMemo(() => {
+    return requests.filter(req => {
+      if (req.type !== 'Investment' && req.type !== 'Liquidation') return false;
+      if (subView === 'backoffice') {
+        return isBackOfficeInvestment(req);
+      }
+      if (subView === 'mobile') {
+        return !isBackOfficeInvestment(req);
+      }
+      return true;
+    });
+  }, [requests, subView]);
 
   useEffect(() => {
     if (selectedId) {
@@ -120,9 +143,52 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
     }
   }, [selectedId, investmentRequests]);
 
-  const filteredInvestments = useMemo(() => 
-    investmentRequests.filter(req => req.applicant.name.toLowerCase().includes(searchTerm.toLowerCase())), [investmentRequests, searchTerm]
-  );
+  const isAgentInvestment = (req: ReviewRequest) => {
+    return Boolean(
+      req.isAgentReferral || 
+      (req.referralCodeUsed && req.referralCodeUsed.toUpperCase().startsWith('AGT-')) || 
+      req.agentCode ||
+      req.agentId
+    );
+  };
+
+  const agentCounts = useMemo(() => {
+    const total = investmentRequests.length;
+    const agent = investmentRequests.filter(isAgentInvestment).length;
+    const direct = total - agent;
+    return { total, agent, direct };
+  }, [investmentRequests]);
+
+  const filteredInvestments = useMemo(() => {
+    return investmentRequests.filter(req => {
+      const term = searchTerm.toLowerCase();
+      const matchesSearch = 
+        req.applicant.name.toLowerCase().includes(term) ||
+        req.referenceId.toLowerCase().includes(term) ||
+        (req.selectedPlan && req.selectedPlan.toLowerCase().includes(term)) ||
+        (req.agentName && req.agentName.toLowerCase().includes(term)) ||
+        (req.agentCode && req.agentCode.toLowerCase().includes(term)) ||
+        (req.referralCodeUsed && req.referralCodeUsed.toLowerCase().includes(term)) ||
+        (req.branchOffice && req.branchOffice.toLowerCase().includes(term)) ||
+        (req.relationshipManager && req.relationshipManager.toLowerCase().includes(term)) ||
+        (req.mandateNumber && req.mandateNumber.toLowerCase().includes(term));
+
+      if (!matchesSearch) return false;
+
+      if (subView === 'backoffice') {
+        if (selectedBranch !== 'all') {
+          const b = (req.branchOffice || '').toLowerCase();
+          if (!b.includes(selectedBranch.toLowerCase())) return false;
+        }
+        return true;
+      }
+
+      const isAgent = isAgentInvestment(req);
+      if (sourceFilter === 'agent') return isAgent;
+      if (sourceFilter === 'direct') return !isAgent;
+      return true;
+    });
+  }, [investmentRequests, searchTerm, sourceFilter, subView, selectedBranch]);
 
   const toggleSection = (id: string) => {
     const next = new Set(openSections);
@@ -306,6 +372,248 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-8">
+            {isAgentInvestment(inv) && (() => {
+              const commissionCalc = calculateAgentCommission(inv.amount, inv.tenure || '30 days');
+              const effectiveRate = inv.agentCommissionRate ?? commissionCalc.commissionPercent;
+              const effectiveAmount = inv.agentCommissionAmount ?? commissionCalc.commissionAmount;
+              const commissionStatus = inv.agentCommissionStatus || 'Pending';
+
+              return (
+                <div className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent dark:from-amber-950/30 dark:via-amber-900/10 dark:to-transparent border-2 border-amber-500/30 dark:border-amber-500/30 rounded-[28px] p-8 shadow-sm space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-amber-500/20">
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 rounded-2xl bg-amber-500/20 dark:bg-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-inner">
+                        <span className="material-symbols-outlined text-3xl font-black">real_estate_agent</span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-amber-500 text-white shadow-xs">
+                            AGENT REFERRAL LINK
+                          </span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                            commissionStatus === 'Paid' 
+                              ? 'bg-emerald-500 text-white' 
+                              : commissionStatus === 'Approved' 
+                              ? 'bg-blue-500 text-white' 
+                              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                          }`}>
+                            Commission {commissionStatus}
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight mt-1">
+                          Attributed to Agent: {inv.agentName || 'Tunde Davies'}
+                        </h3>
+                      </div>
+                    </div>
+
+                    {(currentUser.role === 'Super Admin' || currentUser.role === 'Finance') && (
+                      <div className="flex items-center gap-2">
+                        {commissionStatus !== 'Approved' && commissionStatus !== 'Paid' && (
+                          <button
+                            onClick={() => {
+                              const calc = calculateAgentCommission(inv.amount, inv.tenure || '30 days');
+                              const updated: ReviewRequest = {
+                                ...inv,
+                                agentCommissionStatus: 'Approved',
+                                agentCommissionRate: effectiveRate,
+                                agentCommissionAmount: effectiveAmount,
+                                operationLogs: [
+                                  {
+                                    id: `log-${Date.now()}`,
+                                    timestamp: new Date().toLocaleString(),
+                                    actor: currentUser.name,
+                                    action: 'COMMISSION APPROVED',
+                                    comment: `Commission of ₦${effectiveAmount.toLocaleString()} (${effectiveRate}%) approved for Agent ${inv.agentName || 'Tunde Davies'}.`
+                                  },
+                                  ...(inv.operationLogs || [])
+                                ]
+                              };
+                              onUpdateRequest?.(updated);
+                              setSelectedInvestment(updated);
+                              setToastMessage({ text: 'Agent commission approved.', type: 'success' });
+                            }}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs"
+                          >
+                            Approve Commission
+                          </button>
+                        )}
+                        {commissionStatus !== 'Paid' && (
+                          <button
+                            onClick={() => {
+                              const updated: ReviewRequest = {
+                                ...inv,
+                                agentCommissionStatus: 'Paid',
+                                agentCommissionRate: effectiveRate,
+                                agentCommissionAmount: effectiveAmount,
+                                operationLogs: [
+                                  {
+                                    id: `log-${Date.now()}`,
+                                    timestamp: new Date().toLocaleString(),
+                                    actor: currentUser.name,
+                                    action: 'COMMISSION DISBURSED',
+                                    comment: `Commission of ₦${effectiveAmount.toLocaleString()} disbursed to Agent ${inv.agentName || 'Tunde Davies'}.`
+                                  },
+                                  ...(inv.operationLogs || [])
+                                ]
+                              };
+                              onUpdateRequest?.(updated);
+                              setSelectedInvestment(updated);
+                              setToastMessage({ text: 'Agent commission marked as Paid.', type: 'success' });
+                            }}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-xs"
+                          >
+                            Disburse / Mark Paid
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-amber-500/20">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Agent Code / Ref URL</p>
+                      <p className="text-xs font-mono font-black text-amber-600 dark:text-amber-400 mt-1 truncate">
+                        {inv.agentCode || inv.referralCodeUsed || 'AGT-702'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                        {inv.agentReferralUrl || `nolt.finance/invest?ref=${inv.agentCode || 'AGT-TUNDE'}`}
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-amber-500/20">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Mapped Tier & Tenure</p>
+                      <p className="text-xs font-black text-slate-900 dark:text-white mt-1">
+                        {inv.tenure || '30 Days'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                        {commissionCalc.matchedTier?.name || 'Standard Tier'}
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-amber-500/20">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Commission Rate</p>
+                      <p className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
+                        {effectiveRate.toFixed(1)}%
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        of {inv.amount}
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-amber-500/20">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Payable Commission</p>
+                      <p className="text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                        ₦{effectiveAmount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">
+                        GL: 501002 - Brokerage Expense
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-amber-500/10 dark:bg-amber-950/40 p-3.5 rounded-xl border border-amber-500/20 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-amber-500 text-base">info</span>
+                    <span>
+                      <strong>Settings Rule Applied:</strong> {commissionCalc.explanation}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Back Office Origination & Desk Details Card */}
+            {(inv.isBackOfficeInvestment || inv.bookingChannel === 'Back Office' || (inv.referenceId && inv.referenceId.startsWith('#BO-'))) && (
+              <div className="bg-gradient-to-br from-indigo-50/80 via-white to-purple-50/40 dark:from-indigo-950/20 dark:via-surface-dark dark:to-purple-950/20 rounded-[28px] border border-indigo-200/80 dark:border-indigo-800/40 p-6 space-y-5 shadow-sm mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-indigo-100 dark:border-indigo-900/40">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-500/20">
+                      <span className="material-symbols-outlined text-[22px]">corporate_fare</span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                          Back Office Origination
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300">
+                          Branch Desk
+                        </span>
+                      </div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wide mt-0.5">
+                        {inv.branchOffice || 'Head Office (Victoria Island)'}
+                      </h4>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">
+                      Mandate Ref:
+                    </span>
+                    <span className="font-mono text-xs font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/40 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                      {inv.mandateNumber || 'BO-MND-84910'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-indigo-500/20">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Relationship Manager</p>
+                    <p className="text-xs font-black text-slate-900 dark:text-white mt-1">
+                      {inv.relationshipManager || 'Chioma Adebayo (RM-042)'}
+                    </p>
+                    <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold mt-0.5">
+                      Private Wealth & Treasury
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-indigo-500/20">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Booking Channel</p>
+                    <p className="text-xs font-black text-slate-900 dark:text-white mt-1">
+                      Physical Branch / Mandate
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                      Direct Treasury Booking
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-indigo-500/20">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Settlement Route</p>
+                    <p className="text-xs font-black text-slate-900 dark:text-white mt-1 truncate">
+                      {inv.paymentSource || 'RTGS Settlement'}
+                    </p>
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">
+                      Settlement Cleared
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-white/80 dark:bg-slate-900/60 rounded-2xl border border-indigo-500/20">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Deposit Certificate</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="material-symbols-outlined text-[16px] text-emerald-500">verified</span>
+                      <span className="text-xs font-black text-slate-900 dark:text-white">Active Cert</span>
+                    </div>
+                    <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold mt-0.5">
+                      Series III Fixed Term
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-indigo-900 dark:text-indigo-200 bg-indigo-500/10 dark:bg-indigo-950/40 p-3.5 rounded-xl border border-indigo-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-indigo-500 text-base">domain</span>
+                    <span>
+                      <strong>Back Office Placement:</strong> Initiated via branch institutional desk with verified client mandate form and signed term sheet.
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setToastMessage({ text: 'Downloading Term Deposit Certificate (PDF)...', type: 'success' })}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap self-start sm:self-auto shadow-xs"
+                  >
+                    View Certificate
+                  </button>
+                </div>
+              </div>
+            )}
+
             <Section title="PERSONAL & CONTACT DATA" icon="person">
               <Field label="FULL NAME" value={app.name} />
               <Field label="GENDER" value={app.gender || 'Male'} />
@@ -869,13 +1177,21 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight uppercase">
-            {subView === 'dashboard' ? 'Investments Dashboard' : subView === 'mobile' ? 'Mobile App Investments' : 'Investments'}
+            {subView === 'dashboard' 
+              ? 'Investments Dashboard' 
+              : subView === 'mobile' 
+              ? 'Mobile App Investments' 
+              : subView === 'backoffice'
+              ? 'Back Office Investments'
+              : 'Investments'}
           </h2>
           <p className="text-slate-500 dark:text-slate-400 font-bold text-xs mt-0.5">
             {subView === 'dashboard'
               ? 'Investment performance overview, active portfolios and rate configurations.'
               : subView === 'mobile'
               ? 'Investment subscriptions originated from NOLT Mobile App.'
+              : subView === 'backoffice'
+              ? 'Institutional, Corporate Treasury, and HNI investments booked via branch back-office desks and Relationship Managers.'
               : 'Portfolio management and fixed income subscription processing.'}
           </p>
         </div>
@@ -908,67 +1224,325 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
         </div>
       </div>
 
+      {subView === 'backoffice' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Total Booked Volume</span>
+              <span className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 material-symbols-outlined text-lg">account_balance</span>
+            </div>
+            <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+              ₦{filteredInvestments.reduce((sum, r) => sum + (parseFloat(String(r.amount).replace(/[₦$,\s]/g, '')) || 0), 0).toLocaleString()}
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 text-[10px] font-bold text-emerald-600">
+              <span className="material-symbols-outlined text-[14px]">trending_up</span>
+              <span>Active HNI & Corporate Treasury</span>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Back Office Portfolios</span>
+              <span className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 material-symbols-outlined text-lg">folder_shared</span>
+            </div>
+            <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+              {filteredInvestments.length} Active Records
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 text-[10px] font-bold text-slate-500 dark:text-slate-400">
+              <span>{filteredInvestments.filter(r => r.status === 'Approved').length} Approved · {filteredInvestments.filter(r => r.status !== 'Approved').length} In Clearance</span>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Origination Desks</span>
+              <span className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 material-symbols-outlined text-lg">corporate_fare</span>
+            </div>
+            <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+              4 Regional Hubs
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 text-[10px] font-bold text-primary truncate">
+              <span>VI Head Office, Ikeja, Abuja, PH</span>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Average Placement</span>
+              <span className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 material-symbols-outlined text-lg">payments</span>
+            </div>
+            <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+              {filteredInvestments.length > 0
+                ? `₦${Math.round(filteredInvestments.reduce((sum, r) => sum + (parseFloat(String(r.amount).replace(/[₦$,\s]/g, '')) || 0), 0) / filteredInvestments.length).toLocaleString()}`
+                : '₦0'}
+            </p>
+            <div className="flex items-center gap-1.5 mt-2 text-[10px] font-bold text-slate-500 dark:text-slate-400">
+              <span>Fixed Term Deposit Certs</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'applications' ? (
-        <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 font-black text-[10px] uppercase tracking-[0.15em] border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="px-6 py-5">Applicant</th>
-                  <th className="px-6 py-5">Type</th>
-                  <th className="px-6 py-5">Plan</th>
-                  <th className="px-6 py-5">Indemnity</th>
-                  <th className="px-6 py-5">Principal</th>
-                  <th className="px-6 py-5 text-right">Review</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filteredInvestments.length > 0 ? filteredInvestments.map(req => (
-                  <tr key={req.id} onClick={() => setSelectedInvestment(req)} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer group">
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-3">
-                        <img src={req.applicant.avatar} className="w-10 h-10 rounded-xl" alt="" />
-                        <p className="font-black text-slate-900 dark:text-white uppercase text-xs tracking-wide group-hover:text-primary transition-colors">{req.applicant.name}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className={`px-2 py-1 text-[10px] font-black uppercase rounded-lg border ${
-                        req.type === 'Liquidation' 
-                          ? 'bg-rose-100 dark:bg-rose-900/20 text-rose-600 border-rose-200' 
-                          : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 border-blue-200'
-                      }`}>
-                        {req.type}
-                      </span>
-                    </td>
-                    <td className="px-6 py-5"><span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/20 text-purple-600 text-[10px] font-black uppercase rounded-lg border border-purple-200">{req.selectedPlan}</span></td>
-                    <td className="px-6 py-5">
-                      {req.isIndemnitySigned ? (
-                        <div className="flex items-center gap-1.5 text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/30 w-fit">
-                          <span className="material-symbols-outlined text-[14px] font-black">verified</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest">Signed</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-2 py-1 rounded-lg border border-slate-100 dark:border-slate-800 w-fit">
-                          <span className="material-symbols-outlined text-[14px]">pending</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest">Pending</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-5 font-black text-slate-900 dark:text-white">{req.amount}</td>
-                    <td className="px-6 py-5 text-right"><span className="material-symbols-outlined text-slate-300 group-hover:text-primary">chevron_right</span></td>
-                  </tr>
-                )) : (
+        <div className="space-y-4">
+          {/* Controls Bar: Search & Filter Tabs */}
+          <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
+              {subView === 'backoffice' ? (
+                <>
+                  <button
+                    onClick={() => setSelectedBranch('all')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 flex items-center gap-2 ${
+                      selectedBranch === 'all'
+                        ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <span>All Desks</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      selectedBranch === 'all'
+                        ? 'bg-white/20 dark:bg-slate-900/20 text-white dark:text-slate-900'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}>
+                      {investmentRequests.length}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedBranch('Head Office')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 flex items-center gap-2 ${
+                      selectedBranch === 'Head Office'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[15px]">corporate_fare</span>
+                    <span>Head Office VI</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedBranch('Ikeja')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 flex items-center gap-2 ${
+                      selectedBranch === 'Ikeja'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[15px]">apartment</span>
+                    <span>Ikeja Commercial</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedBranch('Abuja')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 flex items-center gap-2 ${
+                      selectedBranch === 'Abuja'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[15px]">domain</span>
+                    <span>Abuja Central</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedBranch('Port Harcourt')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 flex items-center gap-2 ${
+                      selectedBranch === 'Port Harcourt'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[15px]">location_city</span>
+                    <span>Port Harcourt</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setSourceFilter('all')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shrink-0 ${
+                      sourceFilter === 'all'
+                        ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <span>All Investments</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      sourceFilter === 'all'
+                        ? 'bg-white/20 dark:bg-slate-900/20 text-white dark:text-slate-900'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}>
+                      {agentCounts.total}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setSourceFilter('agent')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shrink-0 ${
+                      sourceFilter === 'agent'
+                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/20'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">real_estate_agent</span>
+                    <span>Agent Referrals</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      sourceFilter === 'agent' ? 'bg-white/25 text-white' : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                    }`}>
+                      {agentCounts.agent}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setSourceFilter('direct')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all shrink-0 ${
+                      sourceFilter === 'direct'
+                        ? 'bg-primary text-white shadow-lg shadow-primary/20'
+                        : 'bg-slate-100 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">public</span>
+                    <span>Direct / Organic</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      sourceFilter === 'direct' ? 'bg-white/25 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}>
+                      {agentCounts.direct}
+                    </span>
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div className="relative w-full md:w-80">
+              <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+              <input
+                type="text"
+                placeholder={subView === 'backoffice' ? 'Search client, ref, desk, or RM...' : 'Search applicant, ref, or agent...'}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <span className="material-symbols-outlined text-[14px]">close</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-surface-dark rounded-[24px] border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 font-black text-[10px] uppercase tracking-[0.15em] border-b border-slate-100 dark:border-slate-800">
                   <tr>
-                    <td colSpan={4} className="px-6 py-20 text-center">
-                      <div className="flex flex-col items-center gap-3 text-slate-400">
-                        <span className="material-symbols-outlined text-4xl">inventory_2</span>
-                        <p className="font-black uppercase text-xs tracking-widest">No investment applications found</p>
-                      </div>
-                    </td>
+                    <th className="px-6 py-5">Applicant</th>
+                    <th className="px-6 py-5">Type</th>
+                    <th className="px-6 py-5">Plan</th>
+                    <th className="px-6 py-5">Origin / Desk</th>
+                    <th className="px-6 py-5">Indemnity</th>
+                    <th className="px-6 py-5">Principal</th>
+                    <th className="px-6 py-5 text-right">Review</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredInvestments.length > 0 ? filteredInvestments.map(req => (
+                    <tr key={req.id} onClick={() => setSelectedInvestment(req)} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer group">
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-3">
+                          <img src={req.applicant.avatar} className="w-10 h-10 rounded-xl" alt="" />
+                          <div>
+                            <p className="font-black text-slate-900 dark:text-white uppercase text-xs tracking-wide group-hover:text-primary transition-colors">{req.applicant.name}</p>
+                            <p className="text-[10px] font-mono font-bold text-slate-400">{req.referenceId}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <span className={`px-2 py-1 text-[10px] font-black uppercase rounded-lg border ${
+                          req.type === 'Liquidation' 
+                            ? 'bg-rose-100 dark:bg-rose-900/20 text-rose-600 border-rose-200' 
+                            : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 border-blue-200'
+                        }`}>
+                          {req.type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-5"><span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/20 text-purple-600 text-[10px] font-black uppercase rounded-lg border border-purple-200">{req.selectedPlan}</span></td>
+                      <td className="px-6 py-5">
+                        {isBackOfficeInvestment(req) ? (
+                          <div className="flex flex-col gap-1">
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border border-indigo-500/30 rounded-lg w-fit">
+                              <span className="material-symbols-outlined text-[13px] font-black text-indigo-600">corporate_fare</span>
+                              <span className="text-[9px] font-black uppercase tracking-wider">Back Office Desk</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                              <span className="font-black text-slate-900 dark:text-white truncate max-w-[170px]">{req.branchOffice || 'Head Office VI'}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                              <span>RM:</span>
+                              <span className="font-bold text-slate-700 dark:text-slate-300">{req.relationshipManager || 'Desk Officer'}</span>
+                            </div>
+                          </div>
+                        ) : isAgentInvestment(req) ? (() => {
+                          const calc = calculateAgentCommission(req.amount, req.tenure || '30 days');
+                          const rate = req.agentCommissionRate ?? calc.commissionPercent;
+                          const commAmt = req.agentCommissionAmount ?? calc.commissionAmount;
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30 rounded-lg w-fit">
+                                <span className="material-symbols-outlined text-[13px] font-black text-amber-600">real_estate_agent</span>
+                                <span className="text-[9px] font-black uppercase tracking-wider">Agent Referral</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                                <span className="font-black text-slate-900 dark:text-white">{req.agentName || 'Tunde Davies'}</span>
+                                <span className="font-mono text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-1 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                                  {req.agentCode || req.referralCodeUsed || 'AGT-702'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                                <span className="text-emerald-600 dark:text-emerald-400 font-black">{rate}% comm.</span>
+                                <span>•</span>
+                                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">₦{commAmt.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          );
+                        })() : (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 rounded-lg w-fit text-[10px] font-bold uppercase border border-slate-200 dark:border-slate-700">
+                            <span className="material-symbols-outlined text-[13px]">devices</span>
+                            <span>Mobile App</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-5">
+                        {req.isIndemnitySigned ? (
+                          <div className="flex items-center gap-1.5 text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/30 w-fit">
+                            <span className="material-symbols-outlined text-[14px] font-black">verified</span>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Signed</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-2 py-1 rounded-lg border border-slate-100 dark:border-slate-800 w-fit">
+                            <span className="material-symbols-outlined text-[14px]">pending</span>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Pending</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-5 font-black text-slate-900 dark:text-white">{req.amount}</td>
+                      <td className="px-6 py-5 text-right"><span className="material-symbols-outlined text-slate-300 group-hover:text-primary">chevron_right</span></td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-20 text-center">
+                        <div className="flex flex-col items-center gap-3 text-slate-400">
+                          <span className="material-symbols-outlined text-4xl">inventory_2</span>
+                          <p className="font-black uppercase text-xs tracking-widest">No investment applications found</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       ) : isFinance ? (
@@ -1192,6 +1766,7 @@ const InvestmentView: React.FC<InvestmentViewProps> = ({ requests, onBack, selec
         currentUser={currentUser}
         onAddRequest={onAddRequest}
         requests={requests}
+        defaultChannel={subView === 'backoffice' ? 'Back Office' : 'Mobile App'}
       />
 
       {/* Return Confirmation Modal */}

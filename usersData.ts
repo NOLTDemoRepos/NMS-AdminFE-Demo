@@ -180,5 +180,39 @@ export const INITIAL_USERS: User[] = [
     staffBadgeTier: 'Bronze',
     approvedLoansCount: 20,
     investmentsBookedCount: 3
+  },
+  {
+    id: 'u_agt1',
+    name: 'Tunde Davies',
+    email: 'tunde.davies@apexbrokerage.ng',
+    role: 'Agent',
+    status: 'Active',
+    referralCode: 'AGT-TUNDE',
+    agentCode: 'AGT-702',
+    agentReferralUrl: 'https://nolt.finance/invest?ref=AGT-TUNDE',
+    agentTier: 'Premier Certified Agent',
+    agentTotalCommissionEarned: 350000,
+    agentPendingCommission: 55500,
+    agentReferredInvestmentsCount: 14,
+    lastActive: '5 mins ago',
+    avatar: 'https://picsum.photos/seed/agenttunde/100/100',
+    wrapUser: 'CBU-008 - Babatunde Sogbola'
+  },
+  {
+    id: 'u_agt2',
+    name: 'Amina Bello',
+    email: 'amina.bello@wealthbridge.ng',
+    role: 'Agent',
+    status: 'Active',
+    referralCode: 'AGT-AMINA',
+    agentCode: 'AGT-804',
+    agentReferralUrl: 'https://nolt.finance/invest?ref=AGT-AMINA',
+    agentTier: 'Senior Broker Partner',
+    agentTotalCommissionEarned: 520000,
+    agentPendingCommission: 76500,
+    agentReferredInvestmentsCount: 22,
+    lastActive: '12 mins ago',
+    avatar: 'https://picsum.photos/seed/agentamina/100/100',
+    wrapUser: 'CBU-003 - Fatimah Bello'
   }
 ];

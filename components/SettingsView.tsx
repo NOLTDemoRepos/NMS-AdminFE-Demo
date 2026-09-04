@@ -1,8 +1,9 @@
 
 import React, { useState } from 'react';
 import { UserRole } from '../types';
+import AgentCommissionSettings from './AgentCommissionSettings';
 
-type SettingsTab = 'Change Password' | 'GL Wrapper' | 'Integrations' | 'API & Webhooks';
+type SettingsTab = 'Change Password' | 'Agent Commissions' | 'GL Wrapper' | 'Integrations' | 'API & Webhooks';
 type EmailMethod = 'SMTP' | 'API';
 
 interface SettingsViewProps {
@@ -63,8 +64,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ currentUser = { name: 'Supe
   // Authorizations
   const isGLAuthorized = currentUser?.role === 'Super Admin' || currentUser?.role === 'Finance';
   const tabs = isGLAuthorized 
-    ? (['Change Password', 'GL Wrapper', 'Integrations', 'API & Webhooks'] as SettingsTab[])
-    : (['Change Password', 'Integrations', 'API & Webhooks'] as SettingsTab[]);
+    ? (['Change Password', 'Agent Commissions', 'GL Wrapper', 'Integrations', 'API & Webhooks'] as SettingsTab[])
+    : (['Change Password', 'Agent Commissions', 'Integrations', 'API & Webhooks'] as SettingsTab[]);
 
   const toggleVisibility = (id: string) => {
     const next = new Set(visibleFields);
@@ -242,6 +243,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({ currentUser = { name: 'Supe
             </div>
           </form>
         </div>
+      )}
+
+      {activeTab === 'Agent Commissions' && (
+        <AgentCommissionSettings currentUser={currentUser} />
       )}
 
       {activeTab === 'GL Wrapper' && !isGLAuthorized && (

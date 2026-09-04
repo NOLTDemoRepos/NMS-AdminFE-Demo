@@ -9,6 +9,7 @@ export type AppView =
   | 'investments' 
   | 'investments-dashboard' 
   | 'investments-mobile' 
+  | 'investments-backoffice'
   | 'loans' 
   | 'loans-dashboard' 
   | 'loans-business' 
@@ -37,7 +38,8 @@ export type UserRole =
   | 'Finance'
   | 'Marketing'
   | 'MD'
-  | 'ED';
+  | 'ED'
+  | 'Agent';
 
 export type UserStatus = 'Active' | 'Pending' | 'Suspended';
 
@@ -89,6 +91,12 @@ export interface User {
   staffBadgeTier?: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
   approvedLoansCount?: number;
   investmentsBookedCount?: number;
+  agentCode?: string;
+  agentReferralUrl?: string;
+  agentTier?: string;
+  agentTotalCommissionEarned?: number;
+  agentPendingCommission?: number;
+  agentReferredInvestmentsCount?: number;
 }
 
 export interface SecurityLog {
@@ -185,6 +193,20 @@ export interface InvestmentRate {
   lastUpdated: string;
 }
 
+export interface AgentCommissionTier {
+  id: string;
+  name: string;
+  minAmount: number;
+  maxAmount: number;
+  isMaxInfinity?: boolean;
+  tenureDays: number; // e.g. 30, 60, 90, 180, 365
+  tenureLabel: string; // e.g. "30 Days", "60 Days"
+  commissionPercent: number; // e.g. 2.0 (%), 3.0 (%)
+  status: 'Active' | 'Inactive';
+  description?: string;
+  lastUpdated?: string;
+}
+
 export interface ReviewRequest {
   id: string;
   referenceId: string;
@@ -200,6 +222,15 @@ export interface ReviewRequest {
   ownerName?: string; 
   referralCodeUsed?: string;
   promoCode?: string;
+  isAgentReferral?: boolean;
+  agentId?: string;
+  agentName?: string;
+  agentCode?: string;
+  agentReferralUrl?: string;
+  agentCommissionRate?: number; // e.g. 2.0 or 3.0 (%)
+  agentCommissionAmount?: number; // e.g. 20000 (₦)
+  agentCommissionStatus?: 'Pending Review' | 'Pending' | 'Approved' | 'Paid' | 'Declined';
+  agentTenureDays?: number;
   operationLogs?: OperationLogEntry[];
   selectedPlan?: 'NOLT Rise' | 'NOLT Vault' | 'NOLT Target';
   targetAmount?: string;
@@ -231,6 +262,13 @@ export interface ReviewRequest {
   isStaffLoan?: boolean;
   isMobileLoan?: boolean;
   isBusinessLoan?: boolean;
+  isBackOfficeInvestment?: boolean;
+  isMobileInvestment?: boolean;
+  bookingChannel?: 'Back Office' | 'Mobile App' | 'Agent Referral';
+  branchOffice?: string;
+  relationshipManager?: string;
+  mandateNumber?: string;
+  fixedDepositCertUrl?: string;
   hrisStaffId?: string;
   hrisSalary?: string;
   hrisEmploymentDate?: string;

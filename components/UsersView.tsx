@@ -4,7 +4,7 @@ import { User, UserRole, UserStatus } from '../types';
 import { CORE_BANKING_USERS, INITIAL_USERS } from '../usersData';
 import HRStaffLoanAccessModal from './HRStaffLoanAccessModal';
 
-const ROLES: UserRole[] = ['Super Admin', 'HR Officer', 'HR Manager', 'Credit Manager', 'Credit Officer', 'Sales Manager', 'Sales Team Lead', 'Sales Officer', 'Customer Experience', 'Internal Control', 'Finance', 'MD'];
+const ROLES: UserRole[] = ['Super Admin', 'HR Officer', 'HR Manager', 'Credit Manager', 'Credit Officer', 'Sales Manager', 'Sales Team Lead', 'Sales Officer', 'Customer Experience', 'Internal Control', 'Finance', 'Marketing', 'MD', 'ED', 'Agent'];
 
 interface UsersViewProps {
   currentUser?: { name: string; role: UserRole; avatar: string };
@@ -150,7 +150,11 @@ const UsersView: React.FC<UsersViewProps> = ({
       case 'Customer Experience': return 'support_agent';
       case 'Sales Team Lead': return 'groups';
       case 'Internal Control': return 'verified';
+      case 'Finance': return 'payments';
+      case 'Marketing': return 'campaign';
+      case 'Agent': return 'real_estate_agent';
       case 'MD': return 'military_tech';
+      case 'ED': return 'corporate_fare';
       default: return 'person';
     }
   };

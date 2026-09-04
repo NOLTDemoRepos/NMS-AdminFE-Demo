@@ -13,7 +13,7 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ onClose, currentView, onNavigate, onLogoutClick, currentUser, onRoleChange }) => {
   const isLoansActive = ['loans', 'loans-dashboard', 'loans-business', 'loans-mobile', 'loans-staff'].includes(currentView);
-  const isInvestmentsActive = ['investments', 'investments-dashboard', 'investments-mobile'].includes(currentView);
+  const isInvestmentsActive = ['investments', 'investments-dashboard', 'investments-mobile', 'investments-backoffice'].includes(currentView);
 
   const [isLoansOpen, setIsLoansOpen] = useState(isLoansActive);
   const [isInvestmentsOpen, setIsInvestmentsOpen] = useState(isInvestmentsActive);
@@ -105,7 +105,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, currentView, onNavigate, onL
     'Internal Control', 
     'Finance',
     'MD',
-    'ED'
+    'ED',
+    'Agent'
   ];
 
   return (
@@ -193,6 +194,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, currentView, onNavigate, onL
                     <div className="pl-4 pr-1 space-y-1 border-l-2 border-primary/20 ml-6 my-1 animate-in slide-in-from-top-2 duration-200">
                       <SubNavLink icon="space_dashboard" label="Dashboard" view="investments-dashboard" />
                       <SubNavLink icon="devices" label="Mobile App Investments" view="investments-mobile" />
+                      <SubNavLink icon="corporate_fare" label="Back Office Investments" view="investments-backoffice" />
                     </div>
                   )}
                 </>

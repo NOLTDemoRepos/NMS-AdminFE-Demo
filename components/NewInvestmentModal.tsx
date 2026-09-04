@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReviewRequest, Applicant, UserRole } from '../types';
+import { calculateAgentCommission } from '../services/agentCommissionService';
 
 interface NewInvestmentModalProps {
   isOpen: boolean;
@@ -8,6 +9,7 @@ interface NewInvestmentModalProps {
   currentUser: { name: string, role: string, avatar: string };
   onAddRequest?: (newReq: ReviewRequest) => void;
   requests?: ReviewRequest[];
+  defaultChannel?: 'Back Office' | 'Mobile App';
 }
 
 type Step = 0 | 1 | 2 | 3 | 4;
@@ -57,7 +59,14 @@ const mockNewCustomer = {
   investments: []
 };
 
-const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ isOpen, onClose, currentUser, onAddRequest, requests = [] }) => {
+const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  currentUser, 
+  onAddRequest, 
+  requests = [],
+  defaultChannel
+}) => {
   const [currentStep, setCurrentStep] = useState<Step>(0);
   const [lookupType, setLookupType] = useState<'bvn' | 'casa'>('bvn');
   const [bvn, setBvn] = useState('');
@@ -80,6 +89,13 @@ const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ isOpen, onClose
   const [interestRate, setInterestRate] = useState(12.0); // % per annum
   const [rolloverOption, setRolloverOption] = useState<'Principal & Interest' | 'Principal Only' | 'Payout'>('Principal & Interest');
   const [paymentSource, setPaymentSource] = useState('CASA - Not Linked');
+  const [bookingChannel, setBookingChannel] = useState<'Back Office' | 'Mobile App' | 'Direct'>(
+    defaultChannel || 'Back Office'
+  );
+  const [branchOffice, setBranchOffice] = useState<string>('Head Office (Victoria Island)');
+  const [relationshipManager, setRelationshipManager] = useState<string>('Chioma Adebayo (RM-042)');
+  const [isAgentReferral, setIsAgentReferral] = useState(false);
+  const [selectedAgentCode, setSelectedAgentCode] = useState('AGT-702');
 
   React.useEffect(() => {
     if (customerData?.casaAccountNo) {
@@ -251,8 +267,12 @@ const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ isOpen, onClose
     const computedInt = calculateInterest();
     const computedWht = calculateWht();
     
+    const isBackOffice = bookingChannel === 'Back Office';
+    const mandateNo = isBackOffice ? `BO-MND-${Math.floor(10000 + Math.random() * 90000)}` : undefined;
     const randomReqId = `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
-    const randomRefId = `INV-2026-${Math.floor(10000 + Math.random() * 90000)}`;
+    const randomRefId = isBackOffice 
+      ? `BO-INV-${Math.floor(5000 + Math.random() * 4999)}`
+      : `INV-2026-${Math.floor(10000 + Math.random() * 90000)}`;
 
     const applicantObj: Applicant = {
       name: `${customerData.firstName} ${customerData.middleName ? customerData.middleName + ' ' : ''}${customerData.lastName}`,
@@ -270,6 +290,12 @@ const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ isOpen, onClose
 
     const isTopUp = selectedInvestmentAction === 'topup' && targetedInvestmentId;
 
+    const agentDays = parseInt(tenure, 10) * 30;
+    const commCalc = (!isBackOffice && isAgentReferral) ? calculateAgentCommission(principalAmount, agentDays) : null;
+    const agentName = selectedAgentCode === 'AGT-702' ? 'Tunde Davies' : 'Blessing Okon';
+    const agentId = selectedAgentCode === 'AGT-702' ? 'u_agt1' : 'u_agt2';
+    const refCode = selectedAgentCode === 'AGT-702' ? 'AGT-TUNDE' : 'AGT-BLESSING';
+
     const newRequest: ReviewRequest = {
       id: randomReqId,
       referenceId: randomRefId,
@@ -283,16 +309,34 @@ const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ isOpen, onClose
       selectedPlan: selectedPlan,
       tenure: `${tenure} Months`,
       rolloverOption: rolloverOption,
-      paymentSource: paymentSource,
+      paymentSource: isBackOffice ? 'Direct Wire / RTGS Settlement' : paymentSource,
+      isBackOfficeInvestment: isBackOffice,
+      bookingChannel: bookingChannel,
+      branchOffice: isBackOffice ? branchOffice : undefined,
+      relationshipManager: isBackOffice ? relationshipManager : undefined,
+      mandateNumber: mandateNo,
+      isAgentReferral: !isBackOffice && isAgentReferral,
+      agentId: (!isBackOffice && isAgentReferral) ? agentId : undefined,
+      agentName: (!isBackOffice && isAgentReferral) ? agentName : undefined,
+      agentCode: (!isBackOffice && isAgentReferral) ? selectedAgentCode : undefined,
+      referralCodeUsed: (!isBackOffice && isAgentReferral) ? refCode : undefined,
+      agentReferralUrl: (!isBackOffice && isAgentReferral) ? `https://nolt.finance/invest?ref=${refCode}` : undefined,
+      agentCommissionRate: (!isBackOffice && isAgentReferral) ? commCalc?.commissionPercent : undefined,
+      agentCommissionAmount: (!isBackOffice && isAgentReferral) ? commCalc?.commissionAmount : undefined,
+      agentCommissionStatus: (!isBackOffice && isAgentReferral) ? 'Pending' : undefined,
       currentNodeIndex: 1,
       operationLogs: [
         {
           id: `op-${Date.now()}`,
           timestamp: new Date().toISOString(),
           actor: currentUser.name,
-          action: isTopUp ? 'TOP_UP' : 'SUBMISSION',
+          action: isTopUp ? 'TOP_UP' : isBackOffice ? 'BACK_OFFICE_ORIGINATION' : isAgentReferral ? 'AGENT_INVESTMENT_SUBMISSION' : 'SUBMISSION',
           comment: isTopUp 
             ? `Top-Up of active investment ${targetedInvestmentId} with amount ₦${principalAmount.toLocaleString()}. Plan: ${selectedPlan}, Option: ${rolloverOption}`
+            : isBackOffice
+            ? `Back Office investment booked by RM ${relationshipManager} at ${branchOffice}. Mandate: ${mandateNo}. Plan: ${selectedPlan}`
+            : isAgentReferral
+            ? `New Investment created via Agent referral (${agentName} · ${selectedAgentCode}). Matched commission: ${commCalc?.commissionPercent}% (₦${commCalc?.commissionAmount.toLocaleString()})`
             : `New Investment application initiated via Admin portal. Plan: ${selectedPlan}, Option: ${rolloverOption}`
         }
       ]
@@ -772,6 +816,155 @@ const NewInvestmentModal: React.FC<NewInvestmentModalProps> = ({ isOpen, onClose
                       <span className="uppercase tracking-wider">CASA - {customerData?.casaAccountNo || '0098765432'} ({customerData?.firstName || 'Olanrewaju'} {customerData?.lastName || 'Alabi'})</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Booking Channel & Back Office Desk Selector */}
+                <div className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                      Origination / Booking Channel
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-slate-400">
+                      {bookingChannel === 'Back Office' ? 'Branch Desk Booking' : 'Mobile / Digital Booking'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBookingChannel('Back Office');
+                        setIsAgentReferral(false);
+                      }}
+                      className={`p-3 rounded-xl border flex items-center gap-2.5 text-left transition-all ${
+                        bookingChannel === 'Back Office'
+                          ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-indigo-500">corporate_fare</span>
+                      <div>
+                        <p className="text-xs font-black uppercase">Back Office Desk</p>
+                        <p className="text-[10px] text-slate-400">Branch & RM Placement</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingChannel('Mobile App')}
+                      className={`p-3 rounded-xl border flex items-center gap-2.5 text-left transition-all ${
+                        bookingChannel !== 'Back Office'
+                          ? 'bg-primary/10 border-primary text-primary shadow-xs'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-primary">devices</span>
+                      <div>
+                        <p className="text-xs font-black uppercase">Digital / Mobile App</p>
+                        <p className="text-[10px] text-slate-400">Self-Service Portal</p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {bookingChannel === 'Back Office' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Branch Office</label>
+                        <select
+                          value={branchOffice}
+                          onChange={(e) => setBranchOffice(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="Head Office (Victoria Island)">Head Office (Victoria Island)</option>
+                          <option value="Ikeja Commercial Branch">Ikeja Commercial Branch</option>
+                          <option value="Abuja Central Business District">Abuja Central Business District</option>
+                          <option value="Port Harcourt Trans-Amadi Desk">Port Harcourt Trans-Amadi Desk</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Relationship Manager</label>
+                        <input
+                          type="text"
+                          value={relationshipManager}
+                          onChange={(e) => setRelationshipManager(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          placeholder="RM Name and Staff ID"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Agent Referral Attribution Settings */}
+                <div className="p-5 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent dark:from-amber-950/20 dark:to-transparent border border-amber-500/30 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        id="agent-ref-toggle"
+                        checked={isAgentReferral}
+                        onChange={(e) => setIsAgentReferral(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 dark:border-slate-700 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-amber-500 text-base">real_estate_agent</span>
+                        Attributed to Agent Referral Link
+                      </span>
+                    </label>
+                    {isAgentReferral && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-amber-500 text-white shadow-xs">
+                        Agent Commission Active
+                      </span>
+                    )}
+                  </div>
+
+                  {isAgentReferral && (() => {
+                    const days = parseInt(tenure, 10) * 30;
+                    const commCalc = calculateAgentCommission(parseFloat(amount) || 0, days);
+                    return (
+                      <div className="pt-3 space-y-3 border-t border-amber-500/20 animate-in fade-in duration-200">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest block mb-1">Select Attributed Agent</label>
+                            <select
+                              value={selectedAgentCode}
+                              onChange={(e) => setSelectedAgentCode(e.target.value)}
+                              className="w-full bg-white dark:bg-slate-800 border border-amber-500/30 dark:border-amber-500/30 rounded-xl px-3 py-2 text-xs font-black text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                            >
+                              <option value="AGT-702">Tunde Davies (AGT-702 · AGT-TUNDE)</option>
+                              <option value="AGT-884">Blessing Okon (AGT-884 · AGT-BLESSING)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest block mb-1">Agent Referral URL</label>
+                            <div className="px-3 py-2 bg-white/70 dark:bg-slate-800/70 border border-amber-500/20 rounded-xl text-[10px] font-mono text-amber-700 dark:text-amber-300 truncate">
+                              https://nolt.finance/invest?ref={selectedAgentCode === 'AGT-702' ? 'AGT-TUNDE' : 'AGT-BLESSING'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-3.5 bg-amber-500/10 dark:bg-amber-950/40 border border-amber-500/20 rounded-xl flex items-center justify-between text-xs gap-3">
+                          <div>
+                            <p className="text-[10px] font-black text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+                              Commission Tier Rule Applied ({days} Days Duration)
+                            </p>
+                            <p className="text-slate-700 dark:text-slate-300 text-[11px] font-medium mt-0.5">
+                              {commCalc.explanation}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                              {commCalc.commissionPercent.toFixed(1)}% Commission
+                            </p>
+                            <p className="text-xs font-mono font-bold text-slate-900 dark:text-white">
+                              ₦{commCalc.commissionAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="flex items-center gap-4 pt-4 border-t border-slate-50 dark:border-slate-800">
